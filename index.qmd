@@ -1,15 +1,30 @@
 ---
 title: "Connecting Github"
 author: "Jazlynn Bailey"
+
+project:
+  type: website
+
+website:
+  title: "HumGenome25"
+  navbar:
+    left:
+      - text: "Home"
+        href: index.qmd
+      - text: "Lab 7"
+        href: Lab7.html
+
 format:
   html:
     toc: true
     toc_float: true
     embed-resources: true
-execute: 
+
+execute:
   warning: false
   message: false
 ---
+
 
 ## About me
 
