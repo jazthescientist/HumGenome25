@@ -1,9 +1,6 @@
----
-title: "Connecting Github"
-author: "Jazlynn Bailey"
-
 project:
   type: website
+  output-dir: docs
 
 website:
   title: "HumGenome25"
@@ -23,23 +20,3 @@ format:
 execute:
   warning: false
   message: false
----
-
-
-## About me
-
-#### Image
-
-```{r}
-
-
-knitr::include_graphics("LOGO.png")
-
-```
-
-#### Link to Lab 7
-
-[View Lab 7](Lab7.html)
-
-<!-- force rebuild -->
-
