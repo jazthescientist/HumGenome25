@@ -41,4 +41,8 @@ knitr::include_graphics("LOGO.png")
 
 [View Lab 7](Lab7.html)
 
+```{r}
+file.create("docs/.nojekyll")
+
+```
 
