@@ -1,0 +1,243 @@
+---
+title: "Lab 13"
+author: "Jazlynn Bailey "
+format:
+  html:
+    toc: true
+    toc_float: true
+    embed-resources: true
+editor: visual
+execute: 
+  warning: false
+  message: false
+---
+
+```{r}
+
+library(tidyverse)
+library(janitor)
+library(vegan)
+library(DT)
+
+
+
+NEON_MAGs <- read_tsv("/work/pi_bio678_umass_edu/data_NEON/exported_img_bins_Gs0166454_NEON.tsv",
+                      show_col_types = FALSE) |> 
+  clean_names()
+
+# Extract taxonomy into columns
+NEON_MAGs_tax <- NEON_MAGs |>
+  separate(
+    gtdb_taxonomy_lineage,
+    into = c("domain","phylum","class","order","family","genus","species"),
+    sep = ";\\s*",
+    fill = "right",
+    extra = "drop"
+  )
+
+# Build joinID from genome_name
+NEON_MAGs_tax <- NEON_MAGs_tax |>
+  mutate(
+    joinID = str_extract(genome_name, "[A-Z]{4}_[0-9]{3}-[A-Z]-[0-9]{8}")
+  )
+
+# -------------------------------------------------------------------
+# Load output from Lab 12 (ex5_with_site + chemistry)
+# -------------------------------------------------------------------
+
+# Re-run minimal Lab 12 core to ensure the objects exist
+soilChem <- readRDS("/work/pi_bio678_umass_edu/data_NEON/soilChem.rds")
+
+genomicSamples <- soilChem$sls_metagenomicsPooling |>
+  separate(genomicsPooledIDList, into = c("first","second","third"),
+           sep="\\|", fill="right") |>
+  select(genomicsSampleID, first, second, third)
+
+genSampleExample <- genomicSamples |>
+  pivot_longer(cols = c(first,second,third), values_to = "sampleID") |>
+  select(sampleID, genomicsSampleID) |>
+  drop_na()
+
+chemEx <- soilChem$sls_soilMoisture |>
+  select(sampleID, soilMoisture)
+
+combinedTab <- left_join(genSampleExample, chemEx, by="sampleID") |> drop_na()
+
+soilpH_Example <- soilChem$sls_soilpH |>
+  filter(sampleID %in% combinedTab$sampleID) |>
+  select(sampleID, soilInWaterpH, soilInCaClpH)
+
+combinedTab_pH <- left_join(combinedTab, soilpH_Example, by="sampleID")
+
+# pH averaging function
+mean_pH <- function(x) {
+  h <- 10^(-x)
+  -log10(mean(h, na.rm = TRUE))
+}
+
+genome_groups_all_mean <- combinedTab_pH |>
+  group_by(genomicsSampleID) |>
+  summarize(
+    soilMoisture = mean(soilMoisture, na.rm=TRUE),
+    soilInWaterpH = mean_pH(soilInWaterpH),
+    soilInCaClpH = mean_pH(soilInCaClpH)
+  )
+
+# Add site + joinID
+ex5_with_site <- genome_groups_all_mean |>
+  mutate(
+    siteID = substr(genomicsSampleID, 1, 4),
+    joinID = str_remove(genomicsSampleID, "-COMP$")
+  )
+
+# -------------------------------------------------------------------
+# Join MAG taxonomy with soil chemistry
+# -------------------------------------------------------------------
+
+ex7_master <- left_join(ex5_with_site, NEON_MAGs_tax, by = "joinID")
+
+datatable(head(ex7_master, 20), caption = "Joined MAG + Chemistry Table")
+
+
+
+
+mags <- ex7_master
+
+
+```
+
+# Introduction
+
+This lab explores microbial community composition using Metagenome Assembled Genomes from NEON soil samples. Since the dataset contains only presence information for each MAG, diversity metrics reflect the number of unique taxa rather than true abundance. The goal is to understand taxonomic patterns across sites and compute alpha, beta, and ordination-based diversity.
+
+# Data Overview
+
+```{r}
+glimpse(mags)
+names(mags)
+
+```
+
+This dataset contains identifiers for each MAG, taxonomic annotations, and environmental measurements like pH, moisture, and temperature. We will focus on these columns: • siteID • phylum • class • genomicsSampleID
+
+# Taxonomic Profiling
+
+We begin by summarizing how many MAGs from each phylum appear at each site.
+
+```{r}
+mags <- mags |> rename(site_id = siteID)
+
+taxa_counts <- mags |>
+  filter(!is.na(phylum)) |>
+  count(site_id, phylum)
+
+ggplot(taxa_counts, aes(x = site_id, y = n, fill = phylum)) +
+  geom_col() +
+  labs(title = "Phylum-Level Composition Across Sites",
+       x = "Site",
+       y = "Number of MAGs") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Explanation: This bar chart shows how many MAGs from each phylum appear at each site. Since we do not have abundance values, each MAG counts as one presence.
+
+# Alpha Diversity
+
+We compute Shannon, Simpson, and richness for each site.
+
+```{r}
+
+
+alpha_data <- mags |>
+  filter(!is.na(phylum)) |>
+  count(site_id, phylum) |>
+  group_by(site_id) |>
+  summarize(
+    richness = n(),
+    shannon = diversity(n, index = "shannon"),
+    simpson = diversity(n, index = "simpson")
+  )
+
+alpha_data
+
+```
+
+```{r}
+alpha_data_long <- alpha_data |>
+  pivot_longer(
+    cols = c(richness, shannon, simpson),
+    names_to = "metric",
+    values_to = "value"
+  )
+
+ggplot(alpha_data_long, aes(x = site_id, y = value, fill = metric)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Alpha Diversity Metrics by Site",
+    x = "Site",
+    y = "Value"
+  ) +
+  theme_minimal()
+
+```
+
+Explanation: Richness counts how many phyla appear at a site. Shannon incorporates both richness and evenness. Simpson captures dominance and evenness. Since all MAGs count as single occurrences, these values approximate real diversity.
+
+# Beta Diversity
+
+We compute the Bray Curtis distance between sites. Create presence-absence matrix
+
+```{r}
+pa_matrix <- mags |>
+  filter(!is.na(phylum)) |>
+  count(site_id, phylum) |>
+  pivot_wider(
+    names_from = phylum,
+    values_from = n,
+    values_fill = 0
+  )
+
+site_ids <- pa_matrix$site_id
+
+pa_matrix <- pa_matrix |> select(-site_id)
+
+bray <- vegdist(pa_matrix, method = "bray")
+bray
+
+```
+
+Explanation: Bray Curtis measures dissimilarity between sites based on their MAG composition. Values closer to 0 indicate similar communities. Values closer to 1 indicate large differences.
+
+# NMDS Ordination
+
+We use non-metric multidimensional scaling to visualize similarities among sites.
+
+```{r}
+
+
+nmds_result <- metaMDS(pa_matrix, distance = "bray", k = 2, trymax = 50)
+
+nmds_points <- as.data.frame(nmds_result$points)
+nmds_points$site_id <- site_ids
+
+ggplot(nmds_points, aes(x = MDS1, y = MDS2, label = site_id)) +
+  geom_point(size = 4, color = "steelblue") +
+  geom_text(vjust = -1) +
+  labs(
+    title = "NMDS of NEON MAG Community Composition",
+    x = "MDS1",
+    y = "MDS2"
+  ) +
+  theme_minimal()
+
+```
+
+Explanation: NMDS places sites in a 2D space based on ecological distance. Sites closer together share more similar MAG compositions. This method works well with presence absence data.
+
+# Conclusion
+
+This analysis explored: • Phylum-level community structure • Diversity within each site • Dissimilarity between sites • Ordination patterns based on Bray Curtis distance
+
+The dataset provides a basic view of soil microbial composition. Richness and phylum profiles vary across sites, and NMDS offers a visual summary of ecological relationships. True abundance counts would improve interpretation, but presence-based metrics still reveal meaningful structure.
